@@ -2,16 +2,15 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
-
+require("dotenv").config();
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-const port = 3000;
 
-// 👇 JEDYNA rzecz do zmiany, gdy zmieni się tor
-const LIVE_URL =
-  "https://gs21.gokartsystem.pl/pl/api/live_www__tid_60_h_e72641d13c07348c3b3b4bec9072f915";
+const port = process.env.PORT || 3000;
+const LIVE_URL = process.env.LIVE_URL;
+
 
 const browsers = new Map();
 
@@ -46,7 +45,10 @@ io.on("connection", (socket) => {
       const tid = tidMatch[1];
       const host = parsedUrl.origin;
 
-      const browser = await puppeteer.launch({ headless: true });
+      const browser = await puppeteer.launch({
+        headless: "new", // lub 'true' dla starszych wersji
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
       browsers.set(socket.id, browser);
 
       const page = await browser.newPage();
@@ -79,6 +81,8 @@ io.on("connection", (socket) => {
 
           es.addEventListener("message", (event) => {
             const data = JSON.parse(event.data);
+            console.log(data);
+            console.log("hello");
 
             const driverKey = Object.keys(data).find((key) =>
               data[key].includes(driverName)
