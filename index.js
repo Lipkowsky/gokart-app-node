@@ -3,14 +3,13 @@ const http = require("http");
 const { Server } = require("socket.io");
 const puppeteer = require("puppeteer");
 require("dotenv").config();
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-
 const port = process.env.PORT || 3000;
 const LIVE_URL = process.env.LIVE_URL;
-
 
 const browsers = new Map();
 
@@ -23,6 +22,7 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // Zamknij poprzednią przeglądarkę dla tego socketu
     if (browsers.has(socket.id)) {
       try {
         await browsers.get(socket.id).close();
@@ -35,7 +35,7 @@ io.on("connection", (socket) => {
     socket.join(driverName);
 
     try {
-      // 🔍 Parsujemy tid i host z LINKU
+      // Parsujemy tid i host z LIVE_URL
       const parsedUrl = new URL(LIVE_URL);
       const tidMatch = parsedUrl.pathname.match(/tid_(\d+)_/);
       if (!tidMatch) {
@@ -54,6 +54,7 @@ io.on("connection", (socket) => {
       const page = await browser.newPage();
       await page.goto(LIVE_URL, { waitUntil: "networkidle2" });
 
+      // Funkcje komunikacji z serwerem socket.io
       await page.exposeFunction("handleDriverNotFound", () => {
         io.to(driverName).emit("driverNotFound");
       });
@@ -62,6 +63,7 @@ io.on("connection", (socket) => {
         io.to(driverName).emit("lapData", data);
       });
 
+      // Kod wykonywany w kontekście przeglądarki Puppeteera
       await page.evaluate(
         ({ driverName, tid, host }) => {
           let lastLapNumber = null;
@@ -81,8 +83,6 @@ io.on("connection", (socket) => {
 
           es.addEventListener("message", (event) => {
             const data = JSON.parse(event.data);
-            console.log(data);
-            console.log("hello");
 
             const driverKey = Object.keys(data).find((key) =>
               data[key].includes(driverName)
@@ -105,7 +105,7 @@ io.on("connection", (socket) => {
             const rlData = data[`rl_data_${driverId}`];
             const qlData = data[`ql_data_${driverId}`];
 
-            const currentLap =
+            const currentLapRaw =
               extractTextFromHTML(rData, `#lapsr_${driverId}`) ||
               extractTextFromHTML(qData, `.laps`);
 
@@ -119,7 +119,17 @@ io.on("connection", (socket) => {
               extractTextFromHTML(qData, `#bestlap_${driverId}`) ||
               extractTextFromHTML(qlData, `.bestlap`);
 
-            if (currentLap && currentLap !== lastLapNumber) {
+            // Normalizacja currentLap do liczby lub null
+            const currentLap =
+              currentLapRaw != null && currentLapRaw !== ""
+                ? Number(currentLapRaw)
+                : null;
+
+            // Wysyłamy dane przy pierwszym znalezieniu kierowcy lub gdy zmieni się okrążenie
+            if (
+              currentLap != null &&
+              (lastLapNumber === null || currentLap !== lastLapNumber)
+            ) {
               lastLapNumber = currentLap;
 
               window.handleData({
@@ -140,6 +150,16 @@ io.on("connection", (socket) => {
     } catch (err) {
       console.error("Error launching Puppeteer:", err);
       socket.emit("error", "Internal server error");
+
+      // Wyczyść przeglądarkę w razie błędu
+      if (browsers.has(socket.id)) {
+        try {
+          await browsers.get(socket.id).close();
+        } catch (e) {
+          console.error("Error closing browser after error:", e);
+        }
+        browsers.delete(socket.id);
+      }
     }
   });
 
